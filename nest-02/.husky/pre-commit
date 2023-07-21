@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+yarn run lint
+
+# Проверить статус завершения ESLint
+if [ $? != 0 ]; then
+  echo "Linting failed. Aborting commit."
+  exit 1
+fi
+
+# Если все проверки прошли успешно, продолжаем коммит
+exit 0
