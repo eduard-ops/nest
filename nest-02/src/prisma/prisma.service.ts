@@ -4,12 +4,12 @@ import { PrismaClient } from '@prisma/client'
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit {
-	async onModuleInit() {
+	async onModuleInit(): Promise<void> {
 		await this.$connect()
 	}
 
 	// eslint-disable-next-line @typescript-eslint/require-await
-	async enableShutdownHooks(app: INestApplication) {
+	async enableShutdownHooks(app: INestApplication): Promise<void> {
 		process.on('beforeExit', async () => {
 			await app.close()
 		})

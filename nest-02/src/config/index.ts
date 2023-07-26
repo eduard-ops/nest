@@ -1,5 +1,5 @@
 export default () => ({
 	port: process.env.PORT,
-	accessSecret: process.env.ACCESS_SECRET_KEY,
-	accessExpiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN
+	accessSecretKey: process.env.ACCESS_SECRET_KEY,
+	refreshSecretKey: process.env.REFRESH_SECRET_KEY
 })

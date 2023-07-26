@@ -5,7 +5,7 @@ import { JwtModule } from '@nestjs/jwt'
 import { getJwtConfig } from 'config/jwt.config'
 import { ConfigService, ConfigModule } from '@nestjs/config'
 
-import { JwtStrategy } from './jwt.strategy'
+import { JwtStrategy } from './strategy/jwt.strategy'
 
 import { PrismaService } from 'prisma/prisma.service'
 

@@ -3,9 +3,9 @@ import { ExtractJwt, Strategy } from 'passport-jwt'
 import { ConfigService } from '@nestjs/config'
 
 import { User } from '@prisma/client'
-import { Injectable } from '@nestjs/common'
+import { Injectable, UnauthorizedException } from '@nestjs/common'
 
-import { AuthService } from './auth.service'
+import { AuthService } from '../auth.service'
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -17,11 +17,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 		super({
 			jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
 			ignoreExpiration: false,
-			secretOrKey: configService.get('accessSecret')
+			secretOrKey: configService.get('accessSecretKey')
 		})
 	}
 
 	async validate({ id }: Pick<User, 'id'>): Promise<User | null> {
+		const findUser = await this.AuthService.findToken(+id)
+		if (!findUser.accessToken) {
+			throw new UnauthorizedException('Unauthorized')
+		}
 		return await this.AuthService.findUserById(+id)
 	}
 }
