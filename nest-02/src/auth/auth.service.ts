@@ -1,4 +1,5 @@
 import {
+	BadRequestException,
 	ConflictException,
 	Injectable,
 	NotFoundException,
@@ -17,14 +18,17 @@ import * as bcrypt from 'bcrypt'
 
 import { ISignin, ISignup, ITokens } from './types/interfaces'
 
-import { Token, User } from '@prisma/client'
+import { User } from '@prisma/client'
 import { ConfigService } from '@nestjs/config'
+import { MailService } from '../mail/mail.service'
+import * as moment from 'moment'
 
 @Injectable()
 export class AuthService {
 	constructor(
 		private readonly prisma: PrismaService,
 		private readonly jwtService: JwtService,
+		private readonly mailServise: MailService,
 		private readonly config: ConfigService
 	) {}
 
@@ -35,12 +39,25 @@ export class AuthService {
 			throw new ConflictException('Email address is already registered')
 		}
 		const hashPassword = await bcrypt.hash(password, 12)
+
 		const result = await this.prisma.user.create({
 			data: { email, name, password: hashPassword },
 			select: { name: true, email: true, id: true }
 		})
 
-		await this.prisma.token.create({ data: { userId: result.id } })
+		const { verificationCode, verifyTime } = this.mailServise.generateCode()
+
+		await this.mailServise.sendEmailConfirmation(
+			result.email,
+			result.name,
+			verificationCode
+		)
+
+		await this.mailServise.createEmailVerifications(
+			email,
+			verificationCode,
+			verifyTime
+		)
 
 		return result
 	}
@@ -50,23 +67,21 @@ export class AuthService {
 
 		const findUser = await this.findUserByEmail(email)
 
-		if (!findUser) {
-			throw new NotFoundException('User not found')
-		}
-
 		const passCompare = bcrypt.compareSync(password, findUser.password)
 
-		if (!passCompare) {
-			throw new UnauthorizedException('invalid password')
+		const verifyUser = await this.mailServise.findCodeByEmail(email)
+
+		if (!findUser || !passCompare || !verifyUser.isVerify) {
+			throw new UnauthorizedException(
+				401,
+				`Email is wrong or not verify, or password is wrong`
+			)
 		}
 
-		const { accessToken, refreshToken } = await this.generateTokens(
-			findUser.id,
-			this.config.get('refreshSecretKey')
-		)
+		const { accessToken, refreshToken } = await this.generateTokens(findUser.id)
 
-		await this.prisma.token.update({
-			where: { userId: findUser.id },
+		await this.prisma.user.update({
+			where: { id: findUser.id },
 			data: { accessToken, refreshToken }
 		})
 
@@ -74,14 +89,57 @@ export class AuthService {
 	}
 
 	async signOut(id: number): Promise<void> {
-		await this.prisma.token.update({
-			where: { userId: id },
+		await this.prisma.user.update({
+			where: { id },
 			data: { accessToken: '', refreshToken: '' }
 		})
 	}
 
-	async findToken(id: number): Promise<Token | null> {
-		return await this.prisma.token.findUnique({ where: { id } })
+	async verifyEmail(code: number, email: string): Promise<void> {
+		const res = await this.mailServise.findCodeByEmail(email)
+
+		if (!res) {
+			throw new NotFoundException('Email not found')
+		}
+
+		if (res.emailCode !== code) {
+			throw new BadRequestException(401, 'Invalid code')
+		}
+
+		const currentTime = moment().unix()
+		if (res.expiredTime <= currentTime) {
+			throw new BadRequestException(401, 'Code has been expired')
+		}
+
+		await this.mailServise.confirmVerifyEmail(email)
+	}
+
+	async againSendVerify(email: string): Promise<void> {
+		const res = await this.mailServise.findCodeByEmail(email)
+
+		const user = await this.findUserByEmail(email)
+
+		if (!res) {
+			throw new NotFoundException('Email not found')
+		}
+
+		if (res.isVerify) {
+			throw new BadRequestException('Verification has already been passed')
+		}
+
+		const { verificationCode, verifyTime } = this.mailServise.generateCode()
+
+		await this.mailServise.updateEmailVerifications(
+			email,
+			verificationCode,
+			verifyTime
+		)
+
+		await this.mailServise.sendEmailConfirmation(
+			email,
+			user.name,
+			verificationCode
+		)
 	}
 
 	async getNewTokens(token: string): Promise<ITokens> {
@@ -90,7 +148,7 @@ export class AuthService {
 			this.config.get('refreshSecretKey')
 		)
 
-		const findToken = await this.prisma.token.findFirst({
+		const findToken = await this.prisma.user.findFirst({
 			where: { refreshToken: token }
 		})
 
@@ -100,17 +158,18 @@ export class AuthService {
 
 		const user = await this.findUserById(result.id)
 
-		const { accessToken, refreshToken } = await this.generateTokens(
-			user.id,
-			this.config.get('refreshSecretKey')
-		)
+		const { accessToken, refreshToken } = await this.generateTokens(user.id)
 
-		await this.prisma.token.update({
-			where: { userId: user.id },
+		await this.prisma.user.update({
+			where: { id: user.id },
 			data: { accessToken, refreshToken }
 		})
 
 		return { accessToken, refreshToken }
+	}
+
+	async findToken(id: number): Promise<User | null> {
+		return await this.prisma.user.findUnique({ where: { id } })
 	}
 
 	async validToken(
@@ -128,20 +187,16 @@ export class AuthService {
 		}
 	}
 
-	async generateTokens(id: number, refreshSecret: string): Promise<ITokens> {
-		const accessToken = await this.jwtService.signAsync(
-			{ id },
-			{
-				expiresIn: '1h'
-			}
-		)
+	async generateTokens(id: number): Promise<ITokens> {
+		const accessToken = await this.jwtService.signAsync({ id })
 		const refreshToken = await this.jwtService.signAsync(
 			{ id },
 			{
-				expiresIn: '7d',
-				secret: refreshSecret
+				secret: this.config.get('refreshSecretKey'),
+				expiresIn: this.config.get('refreshTokenExpires')
 			}
 		)
+
 		return { accessToken, refreshToken }
 	}
 

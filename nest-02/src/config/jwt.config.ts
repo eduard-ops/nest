@@ -4,5 +4,7 @@ import { JwtModuleOptions } from '@nestjs/jwt'
 export const getJwtConfig = async (
 	ConfigService: ConfigService
 ): Promise<JwtModuleOptions> => ({
-	secret: ConfigService.get('accessSecretKey')
+	secret: ConfigService.get('accessSecretKey'),
+	signOptions: { expiresIn: ConfigService.get("accessTokenExpires") }
+	
 })
